@@ -1,0 +1,175 @@
+#include "logger.h"
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BNO055.h>
+#include <utility/imumaths.h>
+#include <SoftwareSerial.h>
+
+#define BAUDRATE_HOVER      38400       // [-] Baud rate for HoverSerial (used to communicate with the hoverboard)
+#define ANGLE_LIMIT         100
+#define SPEED_LIMIT         8000
+#define BAUDRATE_PC         115200
+#define BALANCE_AT          91.81//   3.31
+
+
+int timer3 = 0;
+
+class DynamicIncrease {
+  public:
+    unsigned long timer;
+    DynamicIncrease() {
+      timer = millis();
+    };
+    int current = 0;
+    int target = 0;
+    int step = 1;
+    int interval = 20;
+    void eval() {
+      if ((millis() - timer) >= interval  and abs(target - current) >= step) {
+        debug << "Current " << current;
+        if (target > current)
+          current += step;
+        else
+          current -= step;
+      }
+    }
+};
+
+
+
+bool breaked = false;
+
+float KP_BALANCE = 34;    //65 //44 //45
+float KD_BALANCE = 650;   //650 //650 //820
+float KI_BALANCE = 0.6;   //2 //1.9 //1.65
+float K1 = 1035.3;
+float K2 = 118.9;
+float K3 = 435.6;
+
+
+float integral = 0;
+float derivative = 0;
+float proportional = 0;
+float previous_error = 0;
+float pid = 0;
+int init_time = 0;
+
+DynamicIncrease steer_speed = DynamicIncrease();
+DynamicIncrease forward_speed = DynamicIncrease();
+
+unsigned long last_time = 0;
+unsigned long last_time2 = 0;
+SoftwareSerial HoverSerial(5, 3);       // RX, TX
+Adafruit_BNO055 bno = Adafruit_BNO055(); // instantiate IMU
+
+void setup() {
+  long firstTime = millis();
+  //Serial init
+  Serial.begin(BAUDRATE_PC); // Serial to PC
+  HoverSerial.begin(BAUDRATE_HOVER); //Serial to hoverboard
+  imuInit();
+  init_time = millis();
+  steer_speed.target = 150;
+  steer_speed.step = 3;
+  forward_speed.target = 0;
+  timer3 = millis();
+}
+
+void loop() {
+  if (Serial.available()) {
+    String values = Serial.readString();
+    String speed = getValue(values, ':', 1);
+    String steer = getValue(values, ':', 0);
+    forward_speed.target = speed.toInt();
+    steer_speed.target = steer.toInt();
+    debug << "Setting Speed, Steer to " << speed << " " << steer;
+  }
+  if (millis() - last_time >= 10) {
+    last_time = millis();
+    motionController();
+    
+  }
+  
+}
+
+int i = 0;
+void imuInit() {
+  debug << "Looking for IMU :lupa:";
+  if (!bno.begin())
+  {
+    Serial.print("Ooops, no BNO055 detected ... Check your wiring or I2C ADDR! :fail:");
+    while (1); // halt for safety
+  }
+  delay(1000); // init delay
+  bno.setExtCrystalUse(true);
+  debug << "IMU init done :check:  Make robot stand on BALANCE_AT now.";
+  float error = 9999;
+  while (abs(error) > 4) { // waiting for robot to stand
+    imu::Vector<3> _euler = bno.getVector(Adafruit_BNO055::VECTOR_EULER);
+    error = _euler.z() + BALANCE_AT;
+  }
+  info << "Robot is starting to stand now. :check:";
+}
+
+void motionController() {
+  // IMU sampling
+  imu::Vector<3> _euler = bno.getVector(Adafruit_BNO055::VECTOR_EULER);
+  imu::Vector<3> _gyro = bno.getVector(Adafruit_BNO055::VECTOR_GYROSCOPE);
+  float error = _euler.z() + BALANCE_AT;
+
+
+//  if (millis() - init_time > 20000)
+//    steer_speed.target = 150;
+//  if (millis() - init_time > 35000)
+//    steer_speed.target = 0;
+//  if (millis() - init_time > 50000)
+//    steer_speed.target = -150;
+//  if (millis() - init_time > 65000)
+//    steer_speed.target = 0;
+//  if (millis() - init_time > 80000)
+//    forward_speed.target = 200;
+//  if (millis() - init_time > 95000)
+//    forward_speed.target = 0;
+//  if (millis() - init_time > 110000)
+//    forward_speed.target = -200;
+//  if (millis() - init_time > 125000)
+//    forward_speed.target = 0;
+  if (millis() - last_time2 > 4000){
+    steer_speed.target = steer_speed.target * -1;
+    last_time2 = millis();}
+  // Balance controller
+  
+  forward_speed.eval();
+  steer_speed.eval();
+
+    float gyro_speed = (error - previous_error)/0.1*3; 
+    float dtheta = gyro_speed*(0.23/0.115);
+    pid = ((K1*error + K2*dtheta + K3*gyro_speed) / 180 * 3.14);
+    previous_error = error;
+    //pid = atan(pid) * ((0.5 * abs(pid)) + 30);]
+    long secondTime = millis();
+    if (secondTime - timer3 > 1000) {
+      i = i;
+      } else {
+      i = i + 1;
+    }
+  debug << "phi" << error << "dtheta " << dtheta << "dphi " << gyro_speed << " Control " << pid;
+    info << i;
+    
+  if (abs(error) > ANGLE_LIMIT || abs(pid) > SPEED_LIMIT) {
+    breaked = true;
+  }
+  if (!breaked) {
+    setHoverboard(0, -1 * pid *1.8);
+  }
+  else {
+    setHoverboard(0, 0);
+    fail << "Robot is breaked at angle " << error << ", speed  " << pid << ".  :fire:";
+    delay(100);
+    integral = 0;
+    if (abs(error) < 2 and abs(pid) < 100) {
+      breaked = !breaked;
+    }
+
+  }
+}
