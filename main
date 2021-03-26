@@ -10,7 +10,7 @@
 #define ANGLE_LIMIT         100
 #define SPEED_LIMIT         8000
 #define BAUDRATE_PC         115200
-#define BALANCE_AT          91.97//   3.31
+#define BALANCE_AT          91.97//   92.93
 
 
 int timer3 = 0;
