@@ -3,7 +3,6 @@
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BNO055.h>
 #include <utility/imumaths.h>
-#include <SoftwareSerial.h>
 #include <ESP32Encoder.h>
 
 
@@ -11,7 +10,7 @@
 #define ANGLE_LIMIT         100
 #define SPEED_LIMIT         8000
 #define BAUDRATE_PC         115200
-#define BALANCE_AT          92.63//   3.31
+#define BALANCE_AT          91.97//   3.31
 
 
 int timer3 = 0;
@@ -41,14 +40,15 @@ class DynamicIncrease {
 
 bool breaked = false;
 
-float K1 = 903;
-float K2 = 68;
-float K3 = 348;
+float K1 = 1138; // 903
+float K2 = 55; // 68
+float K3 = 620; // 348
 
 float previous_error = 0;
 float previous_theta = 0;
 float pid = 0;
 int init_time = 0;
+int thetas[] = {0,0,0,0,0,0,0,0,0,0};
 
 ESP32Encoder encoder1;
 ESP32Encoder encoder2;
@@ -59,7 +59,7 @@ DynamicIncrease forward_speed = DynamicIncrease();
 unsigned long last_time = 0;
 unsigned long last_time2 = 0;
 #define HoverSerial Serial2
-
+int j = 0;
 Adafruit_BNO055 bno = Adafruit_BNO055(); // instantiate IMU
 
 void setup() {
@@ -99,7 +99,6 @@ void loop() {
   
 }
 
-int i = 0;
 void imuInit() {
   debug << "Looking for IMU :lupa:";
   if (!bno.begin())
@@ -118,14 +117,17 @@ void imuInit() {
   }
   info << "Robot is starting to stand now. :check:";
 }
-
 void motionController() {
+ 
   // IMU sampling
   imu::Vector<3> _euler = bno.getVector(Adafruit_BNO055::VECTOR_EULER);
   imu::Vector<3> _gyro = bno.getVector(Adafruit_BNO055::VECTOR_GYROSCOPE);
   float error = _euler.z() + BALANCE_AT;
-  float theta = encoder1.getCount();
+  thetas[j % 10]= encoder1.getCount();
+  float theta = thetas[j % 10];
 
+
+  
 
   if (millis() - last_time2 > 4000){
     steer_speed.target = steer_speed.target * -1;
@@ -136,22 +138,22 @@ void motionController() {
   steer_speed.eval();
 
     float gyro_speed = (error - previous_error)/0.01; 
-    float dtheta = (theta - previous_theta)/(0.01*2400/(2*3.14));
+    float dtheta = 0;
+      if (j >= 10) {
+     dtheta = (thetas[j % 10]-thetas[(j+1) % 10])/(0.1*2400/(2*3.14));
+  } else  {
+     dtheta = (theta - previous_theta)/(0.01*2400/(2*3.14));
+  }
     pid = 1.5*((K1*error + K2*dtheta + K3*gyro_speed) / 180 * 3.14);
     previous_error = error;
     //pid = atan(pid) * ((0.5 * abs(pid)) + 30);]
     long secondTime = millis();
-    if (secondTime - timer3 > 1000) {
-      i = i;
-      } else {
-      i = i + 1;
-    }
   int position = encoder1.getCount();
-
+  
   debug << "phi" << error << "dtheta " << dtheta << "dphi " << gyro_speed << " Control " << pid << " encoder " << position;
-  info << i;
+
   previous_theta = theta;
-    
+  j = j+1;
   if (abs(error) > ANGLE_LIMIT || abs(pid) > SPEED_LIMIT) {
     breaked = true;
   }
